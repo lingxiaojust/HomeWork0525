@@ -4,12 +4,9 @@
 		<title>three.js webgl - animation - skinning</title>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-
 	</head>
 	<body>
 		<div id="container"></div>
-		
-
 		<script type="importmap">
 			{
 				"imports": {
@@ -76,7 +73,7 @@
 				scene.add( mesh );
 
 				const loader = new GLTFLoader();
-				loader.load( '/Soldier.glb', function ( gltf ) {
+				loader.load( './src/model/Soldier.glb', function ( gltf ) {
 					model = gltf.scene;
 					scene.add( model );
 					model.traverse( function ( object ) {
