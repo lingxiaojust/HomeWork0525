@@ -1,16 +1,229 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>3DScene</title>
-    <link rel="stylesheet" href="./src/index.css" />
-    <script type="module" src="/src/main.js"></script>
-  </head>
-  <body>
-    <my-element>
-      <h1>3DScene</h1>
-    </my-element>
-  </body>
+	<head>
+		<title>three.js webgl - animation - skinning</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+
+	</head>
+	<body>
+		<div id="container"></div>
+		
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "../build/three.module.js",
+					"three/addons/": "./jsm/"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three';
+
+			import Stats from 'three/addons/libs/stats.module.js';
+			import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+			import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+			let scene, renderer, camera, stats,model, skeleton, mixer, clock;
+
+			const crossFadeControls = [];
+
+			let idleAction, walkAction, runAction;
+			let idleWeight, walkWeight, runWeight;
+			let actions, settings;
+
+			let singleStepMode = false;
+			let sizeOfNextStep = 0;
+
+			init();
+
+			function init() {
+
+				const container = document.getElementById( 'container' );
+
+				camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 100 );
+				camera.position.set( 1, 2, - 3 );
+				camera.lookAt( 0, 1, 0 );
+
+				clock = new THREE.Clock();
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.CubeTextureLoader()
+					.setPath( './src/textures/cube/Park3Med/' )
+					.load( [ 'px.jpg', 'nx.jpg', 'py.jpg', 'ny.jpg', 'pz.jpg', 'nz.jpg' ] );
+
+
+				//光源
+				const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+				scene.add(ambientLight);
+				const spotLight=new THREE.SpotLight(0xffffff,50); 
+				spotLight.decay=0.3 
+				spotLight.angle=Math.PI/5  
+				spotLight.position.set(60,10,0)  
+				spotLight.penumbra=0.7  
+				spotLight.castShadow=true
+				scene.add(spotLight);
+
+				// ground
+
+				const mesh = new THREE.Mesh( new THREE.PlaneGeometry( 50, 50 ), new THREE.MeshPhongMaterial( { color:  0x000000, depthWrite: false } ) );
+				mesh.rotation.x = - Math.PI / 2;
+				mesh.receiveShadow = true;
+				scene.add( mesh );
+
+				const loader = new GLTFLoader();
+				loader.load( '/Soldier.glb', function ( gltf ) {
+					model = gltf.scene;
+					scene.add( model );
+					model.traverse( function ( object ) {
+						if ( object.isMesh ) object.castShadow = true;
+					} );
+					createPanel();
+
+					const animations = gltf.animations;
+
+					mixer = new THREE.AnimationMixer( model );
+					idleAction = mixer.clipAction( animations[ 0 ] );
+					walkAction = mixer.clipAction( animations[ 3 ] );
+					runAction = mixer.clipAction( animations[ 1 ] );
+					actions = [ idleAction, walkAction, runAction ];
+					activateAllActions();
+					animate();
+
+				} );
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.shadowMap.enabled = true;
+				container.appendChild( renderer.domElement );
+
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+				window.addEventListener( 'resize', onWindowResize );
+
+			}
+			// 创建面板
+			function createPanel() {
+				const panel = new GUI( { width: 310 } );
+				settings = {
+					'from walk to idle': function () {
+						prepareCrossFade( walkAction, idleAction, 1.0 );
+					},
+					'from idle to walk': function () {
+						prepareCrossFade( idleAction, walkAction, 0.5 );
+					},
+					'from walk to run': function () {
+						prepareCrossFade( walkAction, runAction, 2.5 );
+					},
+					'from run to walk': function () {
+						prepareCrossFade( runAction, walkAction, 5.0 );
+					},
+					'set custom duration': 3.5,
+					'modify idle weight': 0.0,
+					'modify walk weight': 1.0,
+					'modify run weight': 0.0,
+				};
+				crossFadeControls.push( panel.add( settings, 'from walk to idle' ) );
+				crossFadeControls.push( panel.add( settings, 'from idle to walk' ) );
+				crossFadeControls.push( panel.add( settings, 'from walk to run' ) );
+				crossFadeControls.push( panel.add( settings, 'from run to walk' ) );
+				panel.open();
+
+			}
+			// 激活动作、设置权重、播放
+			function activateAllActions() {
+				setWeight( idleAction, settings[ 'modify idle weight' ] );
+				setWeight( walkAction, settings[ 'modify walk weight' ] );
+				setWeight( runAction, settings[ 'modify run weight' ] );
+				actions.forEach( function ( action ) {
+					action.play();
+				} );
+
+			}
+
+			function prepareCrossFade( startAction, endAction, defaultDuration ) {
+				const duration =  defaultDuration ;
+				if ( startAction === idleAction ) {
+					executeCrossFade( startAction, endAction, duration );
+				} 
+				else {
+					synchronizeCrossFade( startAction, endAction, duration );
+				}
+			}
+			// 渐进渐出效果
+			function synchronizeCrossFade( startAction, endAction, duration ) {
+				mixer.addEventListener( 'loop', onLoopFinished );
+				function onLoopFinished( event ) {
+					if ( event.action === startAction ) {
+						mixer.removeEventListener( 'loop', onLoopFinished );
+						executeCrossFade( startAction, endAction, duration );
+					}
+				}
+			}
+			// 权重切换设置
+			function executeCrossFade( startAction, endAction, duration ) {
+				setWeight( endAction, 1 );
+				endAction.time = 0;
+				startAction.crossFadeTo( endAction, duration, true );
+			}
+			function setWeight( action, weight ) {
+
+				action.enabled = true;
+				action.setEffectiveTimeScale( 1 );
+				action.setEffectiveWeight( weight );
+
+			}
+			// 转换形态判断
+			function updateCrossFadeControls() {
+				if ( idleWeight === 1 && walkWeight === 0 && runWeight === 0 ) {
+
+					crossFadeControls[ 0 ].disable();
+					crossFadeControls[ 1 ].enable();
+					crossFadeControls[ 2 ].disable();
+					crossFadeControls[ 3 ].disable();
+				}
+				if ( idleWeight === 0 && walkWeight === 1 && runWeight === 0 ) {
+					crossFadeControls[ 0 ].enable();
+					crossFadeControls[ 1 ].disable();
+					crossFadeControls[ 2 ].enable();
+					crossFadeControls[ 3 ].disable();
+				}
+
+				if ( idleWeight === 0 && walkWeight === 0 && runWeight === 1 ) {
+					crossFadeControls[ 0 ].disable();
+					crossFadeControls[ 1 ].disable();
+					crossFadeControls[ 2 ].disable();
+					crossFadeControls[ 3 ].enable();
+				}
+
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+
+			function animate() {
+				requestAnimationFrame( animate );
+				idleWeight = idleAction.getEffectiveWeight();
+				walkWeight = walkAction.getEffectiveWeight();
+				runWeight = runAction.getEffectiveWeight();
+				updateCrossFadeControls();
+				let mixerUpdateDelta = clock.getDelta();
+				mixer.update( mixerUpdateDelta );
+				renderer.render( scene, camera );
+			}
+
+		</script>
+
+	</body>
 </html>
+
+
